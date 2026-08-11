@@ -1,0 +1,23 @@
+# Telegram-бот
+aiogram==3.30.0
+
+# LLM-провайдеры
+google-genai==2.17.0        # Gemini — основной провайдер
+# openai==2.x               # Этап 2: DeepSeek + Kimi (OpenAI-совместимые), опц. GPT
+# anthropic==0.x            # Этап 5: Claude-провайдер (только при включении)
+
+# Изображения
+pillow==12.3.0
+
+# База данных
+SQLAlchemy[asyncio]==2.0.51
+aiosqlite==0.22.1
+alembic==1.19.1
+
+# Конфигурация
+pydantic-settings==2.15.0
+python-dotenv==1.2.2
+
+# Тестирование
+pytest==9.1.1
+pytest-asyncio==1.4.0

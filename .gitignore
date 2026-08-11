@@ -1,0 +1,32 @@
+# Виртуальные окружения
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Секреты — ключи пользователей и токен бота
+.env
+.env.local
+
+# База: в ней зашифрованные чужие ключи, замеры и история разборов
+*.db
+*.db-journal
+*.db.bak-*
+*.bak
+
+# Логи
+*.log
+
+# Редакторы и ОС
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
