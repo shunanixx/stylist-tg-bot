@@ -43,9 +43,13 @@ class FakeCallback:
 class _CallbackMessage:
     def __init__(self):
         self.markup_cleared = False
+        self.sent: list[str] = []
 
     async def edit_reply_markup(self, reply_markup=None, **kwargs):
         self.markup_cleared = reply_markup is None
+
+    async def answer(self, text: str, **kwargs):
+        self.sent.append(text)
 
 
 class FakeCommand:
@@ -189,3 +193,50 @@ def test_wishlist_items_reach_prompt_with_note():
     assert "- Куртка Carhartt (2500 грн)" in prompt
     # модель должна знать, что вещи ещё нет — иначе посчитает её частью гардероба
     assert "ещё нет" in prompt
+
+
+# --- обновлённый список сразу после правки ------------------------------
+
+
+async def test_wish_answers_with_refreshed_list(session):
+    await wishlist_crud.add_item(session, USER_ID, "Первая")
+
+    message = FakeMessage()
+    await cmd_wish(message, FakeCommand("Вторая"), session)
+
+    assert "1. Первая" in message.sent[0]
+    assert "2. Вторая" in message.sent[0]
+
+
+async def test_unwish_answers_with_refreshed_list(session):
+    for title in ("Первая", "Вторая", "Третья"):
+        await wishlist_crud.add_item(session, USER_ID, title)
+
+    message = FakeMessage()
+    await cmd_unwish(message, FakeCommand("2"), session)
+
+    assert "1. Первая" in message.sent[0]
+    assert "2. Третья" in message.sent[0]
+
+
+async def test_bought_shows_both_lists(session):
+    """Правка задела два списка — номера нужны из обоих."""
+    await wishlist_crud.add_item(session, USER_ID, "Куртка")
+    await wishlist_crud.add_item(session, USER_ID, "Кеды")
+
+    message = FakeMessage()
+    await cmd_bought(message, FakeCommand("1"), session)
+
+    assert "Гардероб" in message.sent[0]
+    assert "Вишлист" in message.sent[0]
+    assert "1. Кеды" in message.sent[0], "в вишлисте номера должны сдвинуться"
+
+
+async def test_wishlist_button_leaves_the_list_in_chat(session):
+    """Всплывашка callback.answer исчезает — список должен остаться."""
+    submission = await _submission(session)
+    callback = FakeCallback(f"wishlist:add:{submission.id}")
+
+    await add_from_analysis(callback, session)
+
+    assert "1. Куртка Carhartt" in callback.message.sent[0]

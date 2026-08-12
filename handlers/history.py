@@ -27,7 +27,7 @@ async def _recent_newest_first(session: AsyncSession, user_id: int):
 async def cmd_history(message: Message, session: AsyncSession) -> None:
     items = await _recent_newest_first(session, message.from_user.id)
     if not items:
-        await message.answer("Разборов пока нет. Пришли описание вещи.")
+        await message.answer("📜 Разборов пока нет. Пришли описание вещи или фото.")
         return
 
     lines = []
@@ -40,7 +40,7 @@ async def cmd_history(message: Message, session: AsyncSession) -> None:
         lines.append(f"{icon} {position}. {date} — {submission.item_title}")
 
     await message.answer(
-        f"<b>Последние разборы</b> — {len(items)} шт., свежие сверху\n"
+        f"📜 <b>Последние разборы</b> — {len(items)} шт., свежие сверху\n"
         + "\n".join(lines)
         + "\n\n/show 1 — полный текст разбора"
     )
@@ -54,7 +54,7 @@ async def cmd_show(
     submission = resolve_position(items, (command.args or "").strip())
     if submission is None:
         await message.answer(
-            "Разборов пока нет. Пришли описание вещи."
+            "📜 Разборов пока нет. Пришли описание вещи или фото."
             if not items
             else f"Нет разбора с таким номером. Сейчас их {len(items)}, "
             "номер бери из /history: <code>/show 1</code>"

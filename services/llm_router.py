@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from config import Settings
+from services import limits
 from services.llm.base import LLMResponse
 from services.llm.factory import get_provider
 
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 class LLMRouter:
     """Оркестрация одного или пары вызовов. Сравнение — не больше
     MAX_CONCURRENT_AGENTS провайдеров: это контроль стоимости, а не только UI.
+    Владелец ходит своим ключом и своей квотой, для него лимит снят.
     """
 
     def __init__(self, cfg: Settings) -> None:
@@ -37,10 +39,12 @@ class LLMRouter:
         user_text: str,
         images: list[bytes] | None = None,
         api_key: str = "",
+        user_id: int | None = None,
     ) -> dict[str, LLMResponse | BaseException]:
-        if len(provider_names) > self.cfg.max_concurrent_agents:
+        agents_limit = limits.concurrent_agents(user_id, self.cfg)
+        if limits.exceeds(len(provider_names), agents_limit):
             raise ValueError(
-                f"Максимум {self.cfg.max_concurrent_agents} агентов одновременно, "
+                f"Максимум {agents_limit} агентов одновременно, "
                 f"передано {len(provider_names)}"
             )
         for name in provider_names:

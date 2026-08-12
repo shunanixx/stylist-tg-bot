@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from config import Settings
 from db.models import User
 from services.crypto import KeyVault
+from services.limits import is_owner
 
 
 @dataclass(frozen=True)
@@ -27,8 +28,8 @@ def resolve_api_key(user: User, vault: KeyVault, cfg: Settings) -> KeySource:
     if own:
         return KeySource(api_key=own, is_own=True)
 
-    is_owner = bool(cfg.owner_user_id) and user.user_id == cfg.owner_user_id
-    if is_owner and cfg.google_api_key:
+    # Проверка владельца одна на весь код — services.limits
+    if is_owner(user.user_id, cfg) and cfg.google_api_key:
         return KeySource(api_key=cfg.google_api_key, is_own=False)
 
     return KeySource(api_key=None, is_own=False)

@@ -143,12 +143,16 @@ async def test_album_sent_as_one_request_with_all_photos(keyed_session, builder,
     assert submission.input_text == "подпись на последнем"
 
 
-async def test_album_over_limit_is_rejected_before_api_call(keyed_session, builder, vault):
+async def test_album_over_limit_is_rejected_before_api_call(
+    keyed_session, builder, vault, monkeypatch
+):
     import asyncio
 
     from config import settings
     from handlers import analysis
 
+    # Владельца в этом тесте нет: лимит должен сработать
+    monkeypatch.setattr(settings, "owner_user_id", 0)
     analysis._media_buffer._settle_delay = 0.01
     over = settings.max_photos_per_analysis + 1
     album = [_photo_message(f"p-{i}", media_group_id="album-2") for i in range(over)]
@@ -158,6 +162,28 @@ async def test_album_over_limit_is_rejected_before_api_call(keyed_session, build
 
     assert llm.images == [], "лимит — контроль стоимости, до вызова API"
     assert "Максимум" in album[0].sent[0][0]
+
+
+async def test_owner_album_ignores_the_photo_limit(
+    keyed_session, builder, vault, monkeypatch
+):
+    """Владелец платит своей квотой — цифра из конфига его не касается."""
+    import asyncio
+
+    from config import settings
+    from handlers import analysis
+
+    monkeypatch.setattr(settings, "owner_user_id", USER_ID)
+    analysis._media_buffer._settle_delay = 0.01
+    over = settings.max_photos_per_analysis + 1
+    album = [_photo_message(f"o-{i}", media_group_id="album-3") for i in range(over)]
+    llm = FakeRouter(LLMResponse(raw_text=FULL_ANSWER))
+
+    await asyncio.gather(*(handle_photo(m, FakeBot(), keyed_session, builder, llm, vault) for m in album))
+
+    assert len(llm.images) == 1
+    assert len(llm.images[0]) == over
+    assert all("Максимум" not in text for text, _ in album[0].sent)
 
 
 async def test_photo_without_key_is_not_downloaded(session, builder, vault):

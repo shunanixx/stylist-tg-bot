@@ -92,6 +92,26 @@ async def test_compare_respects_max_concurrent_agents(router):
         )
 
 
+async def test_owner_compares_more_agents_than_the_limit(router, cfg):
+    """Лимит агентов — защита от чужого расхода; владелец платит своей квотой."""
+    cfg.owner_user_id = 42
+
+    results = await router.analyze_compare(
+        ["gemini", "deepseek", "kimi"], "SYS", "куртка", api_key="k-1", user_id=42
+    )
+
+    assert set(results) == {"gemini", "deepseek", "kimi"}
+
+
+async def test_other_user_still_hits_the_limit_when_owner_is_set(router, cfg):
+    cfg.owner_user_id = 42
+
+    with pytest.raises(ValueError, match="Максимум 2"):
+        await router.analyze_compare(
+            ["gemini", "deepseek", "kimi"], "SYS", "куртка", api_key="k-1", user_id=7
+        )
+
+
 async def test_compare_rejects_disabled_before_calling(router):
     with pytest.raises(ValueError, match="отключён"):
         await router.analyze_compare(["gemini", "openai"], "SYS", "куртка", api_key="k-1")

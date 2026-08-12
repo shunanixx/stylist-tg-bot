@@ -1,4 +1,5 @@
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
@@ -24,36 +25,30 @@ STEPS: dict[State, str] = {
 ORDER: list[State] = list(STEPS)
 SKIP_WORDS = {"-", "скип", "пропустить", "skip", "нет"}
 
+# id последнего заданного вопроса — чтобы убрать его, когда он отвечен
+PROMPT_KEY = "prompt_message_id"
+
+SETUP_INTRO = (
+    "📐 Заполним параметры — шесть чисел.\n"
+    "Обхваты нужны <b>полные</b>: лентой вокруг тела, а не по плоскости вещи.\n"
+    "«-» пропустить пункт, /cancel — выйти.\n\n"
+)
+
+HINT = "Полуобхват считаю сам — продавцы указывают замеры вещи именно в нём."
+
 
 @router.message(Command("profile"))
 async def cmd_profile(message: Message, session: AsyncSession, state: FSMContext) -> None:
     await state.clear()
     user = await users_crud.get_or_create_user(session, message.from_user.id)
-
-    lines = []
-    for measurement in MEASUREMENTS:
-        value = getattr(user, measurement.field)
-        shown = describe(measurement, value) if value is not None else f"{measurement.label}: —"
-        lines.append(shown)
-
-    await message.answer(
-        "<b>Параметры фигуры</b>\n"
-        + "\n".join(lines)
-        + "\n\nПолуобхват считается сам — продавцы указывают замеры вещи именно в нём."
-        + "\n/setup — заполнить заново"
-    )
+    await message.answer(render_profile(user) + "\n\n/setup — заполнить заново")
 
 
 @router.message(Command("setup"))
 async def cmd_setup(message: Message, state: FSMContext) -> None:
     first = ORDER[0]
     await state.set_state(first)
-    await message.answer(
-        "Заполним параметры. «-» чтобы пропустить пункт, /cancel — выйти.\n"
-        "Обхваты меряй лентой вокруг; если под рукой только вещь по плоскости — "
-        "пиши полуобхват как «пол 48».\n\n"
-        f"{BY_FIELD[STEPS[first]].question}"
-    )
+    await _ask(message, state, SETUP_INTRO + BY_FIELD[STEPS[first]].question)
 
 
 @router.message(StateFilter(*ORDER), F.text)
@@ -70,6 +65,9 @@ async def process_measurement(
     field = STEPS[step]
     measurement = BY_FIELD[field]
     text = (message.text or "").strip().lower()
+    # Ответ уходит из чата сразу: в переписке остаётся ровно один живой вопрос,
+    # а цифры всё равно видны в сводке параметров.
+    await _delete_quietly(message)
 
     if text in SKIP_WORDS:
         value: float | None = None
@@ -77,18 +75,22 @@ async def process_measurement(
         value = parse_value(text, measurement)
         if value is None:
             if not measurement.girth and looks_like_half(text):
-                await message.answer(
+                complaint = (
                     f"«{measurement.label}» — это не обхват, полуобхвата у него нет. "
                     "Пришли обычное число."
                 )
             else:
-                hint = " Полуобхват — «пол 48»." if measurement.girth else ""
-                await message.answer(f"Нужно число. Или «-», чтобы пропустить.{hint}")
+                tail = " Полуобхват — «пол 48»." if measurement.girth else ""
+                complaint = f"Нужно число. Или «-», чтобы пропустить.{tail}"
+            await _ask(message, state, f"⚠️ {complaint}\n\n{measurement.question}")
             return
         if not measurement.low <= value <= measurement.high:
-            await message.answer(
-                f"Ожидаю обхват от {measurement.low:g} до {measurement.high:g} "
-                f"{measurement.unit}. Если это полуобхват — пришли «пол {text}»."
+            await _ask(
+                message,
+                state,
+                f"⚠️ Ожидаю полный обхват от {measurement.low:g} до "
+                f"{measurement.high:g} {measurement.unit}. "
+                f"Если это полуобхват — пришли «пол {text}».\n\n{measurement.question}",
             )
             return
 
@@ -98,9 +100,57 @@ async def process_measurement(
     if index + 1 < len(ORDER):
         next_step = ORDER[index + 1]
         await state.set_state(next_step)
-        await message.answer(BY_FIELD[STEPS[next_step]].question)
+        await _ask(message, state, BY_FIELD[STEPS[next_step]].question)
         return
 
+    # Последний вопрос убираем до clear(): в state лежит его message_id
+    await _drop_prompt(message, state)
     await state.clear()
     await users_crud.set_onboarded(session, message.from_user.id)
-    await message.answer("Готово. Параметры сохранены — /profile посмотреть.")
+    user = await users_crud.get_or_create_user(session, message.from_user.id)
+    await message.answer("✅ Готово, параметры сохранены.\n\n" + render_profile(user))
+
+
+def render_profile(user) -> str:
+    """Сводка замеров: она же ответ на /profile, она же итог онбординга —
+    пользователь видит все шесть чисел сразу, а не по одному в переписке."""
+    lines = []
+    for measurement in MEASUREMENTS:
+        value = getattr(user, measurement.field, None)
+        lines.append(
+            describe(measurement, value)
+            if value is not None
+            else f"{measurement.label}: —"
+        )
+    return "📐 <b>Параметры фигуры</b>\n" + "\n".join(lines) + f"\n\n{HINT}"
+
+
+async def _ask(message: Message, state: FSMContext, text: str) -> None:
+    """Задаёт вопрос вместо предыдущего: старый удаляется, новый запоминается."""
+    await _drop_prompt(message, state)
+    sent = await message.answer(text)
+    await state.update_data(**{PROMPT_KEY: getattr(sent, "message_id", None)})
+
+
+async def _drop_prompt(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    prompt_id = data.get(PROMPT_KEY)
+    if not prompt_id:
+        return
+    bot = getattr(message, "bot", None)
+    chat = getattr(message, "chat", None)
+    if bot is None or chat is None:
+        return
+    try:
+        await bot.delete_message(chat.id, prompt_id)
+    except TelegramBadRequest:
+        # Старше 48 часов или уже удалено вручную — не повод ронять диалог
+        pass
+
+
+async def _delete_quietly(message: Message) -> None:
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        # В группе без прав администратора чужое сообщение не удалить
+        pass

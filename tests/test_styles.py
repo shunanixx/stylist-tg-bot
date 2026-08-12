@@ -227,3 +227,34 @@ def test_prompt_accepts_plain_strings():
     prompt = PromptBuilder().build(None, [], [], [], ["techwear"])
 
     assert "techwear" in prompt
+
+
+# --- обновлённый список сразу после правки ------------------------------
+
+
+async def test_add_answers_with_refreshed_list(session):
+    message = FakeMessage()
+
+    await cmd_style_add(message, FakeCommand("минимализм, casual"), session)
+
+    assert "1. минимализм" in message.sent[0]
+    assert "2. casual" in message.sent[0]
+
+
+async def test_delete_answers_with_refreshed_list(session):
+    await cmd_style_add(FakeMessage(), FakeCommand("первый, второй, третий"), session)
+
+    message = FakeMessage()
+    await cmd_style_del(message, FakeCommand("2"), session)
+
+    assert "1. первый" in message.sent[0]
+    assert "2. третий" in message.sent[0]
+
+
+async def test_rename_answers_with_refreshed_list(session):
+    await cmd_style_add(FakeMessage(), FakeCommand("gorpcore"), session)
+
+    message = FakeMessage()
+    await cmd_style_edit(message, FakeCommand("1 -> techwear"), session)
+
+    assert "1. techwear" in message.sent[0]

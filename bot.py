@@ -17,6 +17,7 @@ from handlers import (
     api_key,
     cleanup,
     history,
+    menu,
     model_selection,
     profile,
     start,
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 COMMANDS = [
     BotCommand(command="start", description="Начало"),
+    BotCommand(command="menu", description="Показать кнопки меню"),
     BotCommand(command="apikey", description="Свой ключ Gemini"),
     BotCommand(command="profile", description="Параметры фигуры"),
     BotCommand(command="styles", description="Мои стили"),
@@ -102,6 +104,9 @@ async def main() -> None:
         start.router,
         api_key.router,
         admin.router,
+        # До profile и analysis: кнопка присылает обычный текст, и любой роутер
+        # с F.text выше перехватил бы её как ответ FSM или как описание вещи.
+        menu.router,
         profile.router,
         styles.router,
         wardrobe.router,

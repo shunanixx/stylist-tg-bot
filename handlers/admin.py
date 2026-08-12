@@ -38,7 +38,7 @@ async def cmd_stats(message: Message, session: AsyncSession) -> None:
     ) or 0
 
     lines = [
-        "<b>Статистика</b>",
+        "📊 <b>Статистика</b>",
         f"Пользователей: {users_total} (со своим ключом: {with_key})",
         f"Прислали хотя бы одну вещь: {active}",
         f"Разборов: {submissions}, ответов модели: {results or 0}",

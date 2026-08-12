@@ -31,3 +31,18 @@ def position_of(items: list[Any], item: Any) -> int | None:
         if getattr(candidate, "id", None) == getattr(item, "id", None):
             return index
     return None
+
+
+def by_id(items: list[T], item_id: int | None) -> T | None:
+    """Вещь по `id` — для инлайн-кнопок: в них зашит id, а не позиция.
+
+    Ищем в свежем списке, а не в БД: кнопка под старым сообщением может
+    указывать на уже удалённую вещь, и промах должен выглядеть как «её уже
+    нет», а не как повторное удаление.
+    """
+    if item_id is None:
+        return None
+    for candidate in items:
+        if getattr(candidate, "id", None) == item_id:
+            return candidate
+    return None

@@ -104,3 +104,38 @@ async def test_number_cannot_reach_another_users_item(session):
 
     assert len(await wardrobe_crud.list_items(session, OTHER_USER_ID)) == 1
     assert "пуст" in message.sent[0].lower()
+
+
+# --- обновлённый список сразу после правки ------------------------------
+
+
+async def test_add_answers_with_refreshed_list(session):
+    """Номера после правки сдвигаются — без свежего списка следующий /remove
+    уйдёт по устаревшему номеру."""
+    await _fill(session, "Свитшот")
+
+    message = FakeMessage()
+    await cmd_add(message, FakeCommand("Джинсы"), session)
+
+    assert "1. Свитшот" in message.sent[0]
+    assert "2. Джинсы" in message.sent[0]
+
+
+async def test_remove_answers_with_refreshed_list(session):
+    await _fill(session, "Первая", "Вторая", "Третья")
+
+    message = FakeMessage()
+    await cmd_remove(message, FakeCommand("2"), session)
+
+    assert "1. Первая" in message.sent[0]
+    assert "2. Третья" in message.sent[0]
+    assert "3." not in message.sent[0]
+
+
+async def test_last_removal_says_the_wardrobe_is_empty(session):
+    await _fill(session, "Единственная")
+
+    message = FakeMessage()
+    await cmd_remove(message, FakeCommand("1"), session)
+
+    assert "пуст" in message.sent[0].lower()

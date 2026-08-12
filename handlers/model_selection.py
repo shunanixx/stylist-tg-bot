@@ -16,13 +16,13 @@ async def cmd_model(message: Message, session: AsyncSession) -> None:
     providers = settings.enabled_providers
     if len(providers) == 1:
         await message.answer(
-            f"Анализ идёт через <b>{providers[0]}</b> — модель "
+            f"🤖 Анализ идёт через <b>{providers[0]}</b> — модель "
             f"<code>{settings.gemini_model}</code>.\n"
             "Другие провайдеры появятся на следующих этапах."
         )
         return
     await message.answer(
-        "Выбери модель для анализа:",
+        "🤖 Выбери модель для анализа:",
         reply_markup=model_select_kb(providers, user.default_llm_provider),
     )
 

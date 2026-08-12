@@ -83,6 +83,15 @@ async def cmd_apikey_off(
     await message.answer("Ключ удалён. Разборы не заработают, пока не пришлёшь новый.")
 
 
+async def show_key_status(
+    message: Message, session: AsyncSession, vault: KeyVault, settings: Settings
+) -> None:
+    """Статус ключа без разбора текста — вход для кнопки меню: у неё нет
+    аргумента команды, а «/apikey» с подписью кнопки выглядел бы как ключ."""
+    user = await users_crud.get_or_create_user(session, message.from_user.id)
+    await _show_status(message, user, vault, settings)
+
+
 async def _show_status(
     message: Message, user, vault: KeyVault, settings: Settings
 ) -> None:

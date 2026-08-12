@@ -12,7 +12,9 @@ from db.crud import users as users_crud
 from db.crud import wardrobe as wardrobe_crud
 from db.crud import wishlist as wishlist_crud
 from keyboards.analysis_kb import analysis_actions_kb
+from services import limits
 from services.api_keys import NO_KEY_MESSAGE, resolve_api_key
+from services.analysis_format import decorate_sections, verdict_icon
 from services.crypto import KeyVault
 from services.image_utils import downscale_image
 from services.llm.base import LLMError
@@ -42,9 +44,10 @@ async def handle_photo(
     if messages is None:
         return
 
-    if len(messages) > settings.max_photos_per_analysis:
+    photo_limit = limits.photos_per_analysis(message.from_user.id, settings)
+    if limits.exceeds(len(messages), photo_limit):
         await message.answer(
-            f"Максимум {settings.max_photos_per_analysis} фото за раз, прислано {len(messages)}. "
+            f"Максимум {photo_limit} фото за раз, прислано {len(messages)}. "
             "Отправь меньше или группами."
         )
         return
@@ -169,6 +172,8 @@ async def _analyze_and_reply(
         return
 
     display_text, data = parse_llm_response(response.raw_text)
+    # Иконки ставим до записи в БД: /show достаёт тот же текст, что был в чате
+    display_text = decorate_sections(display_text, data["verdict"])
 
     submission = await submissions_crud.create_submission(
         session,
@@ -229,6 +234,6 @@ def _footer(provider_name: str, response: object, data: dict) -> str:
     tokens_out = getattr(response, "tokens_output", 0)
     latency = getattr(response, "latency_ms", 0)
     return (
-        f"— {provider_name} · {tokens_in}→{tokens_out} ток. · {latency / 1000:.1f} с · "
-        f"вердикт: {data['verdict']}"
+        f"{verdict_icon(data['verdict'])} {provider_name} · {tokens_in}→{tokens_out} ток. · "
+        f"{latency / 1000:.1f} с · вердикт: {data['verdict']}"
     )
