@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
-from config import settings
+from config import Settings, settings
 from db.database import Database
 from filters.owner import IsOwner
 from handlers import (
@@ -27,6 +27,7 @@ from handlers import (
 )
 from middlewares.chat_log import ChatLogMiddleware
 from middlewares.db_session import DbSessionMiddleware
+from middlewares.identity import IdentityMiddleware
 from middlewares.track_sent import TrackSentMessagesMiddleware
 from services.crypto import KeyVault
 from services.llm.factory import IMPLEMENTED, PLANNED
@@ -65,6 +66,51 @@ def check_providers() -> None:
             )
 
 
+def build_dispatcher(database: Database, cfg: Settings = settings) -> Dispatcher:
+    """Сборка диспетчера: middleware, зависимости, порядок роутеров.
+
+    Вынесено из main(), чтобы тест целостности проверял ту же схему, что идёт
+    в прод, а не свою копию. Вызывать один раз на процесс: роутеры —
+    модульные объекты, второй include их же упадёт «already attached».
+    """
+    dispatcher = Dispatcher(storage=MemoryStorage())
+
+    # Бот публичный: сплошного owner-шлюза больше нет, приватны только
+    # админ-команды — они висят на фильтре IsOwner.
+    dispatcher.update.outer_middleware(DbSessionMiddleware(database))
+    # Строго после сессии: журнал пишется в ту же транзакцию, иначе вторая
+    # сессия конкурировала бы за блокировку SQLite.
+    dispatcher.update.outer_middleware(ChatLogMiddleware())
+    # @username Telegram присылает с каждым апдейтом и нигде не хранит —
+    # без этого /numbers показывал бы одни голые id.
+    dispatcher.update.outer_middleware(IdentityMiddleware(cfg.default_llm_provider))
+
+    dispatcher["prompt_builder"] = PromptBuilder()
+    dispatcher["llm_router"] = LLMRouter(cfg)
+    dispatcher["vault"] = KeyVault(cfg.encryption_key or cfg.telegram_bot_token)
+    dispatcher["settings"] = cfg
+
+    admin.router.message.filter(IsOwner(cfg.owner_user_id))
+
+    dispatcher.include_routers(
+        start.router,
+        api_key.router,
+        admin.router,
+        # До profile и analysis: кнопка присылает обычный текст, и любой роутер
+        # с F.text выше перехватил бы её как ответ FSM или как описание вещи.
+        menu.router,
+        profile.router,
+        styles.router,
+        wardrobe.router,
+        wishlist.router,
+        history.router,
+        cleanup.router,
+        model_selection.router,
+        analysis.router,  # последним: ловит свободный текст
+    )
+    return dispatcher
+
+
 async def main() -> None:
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -84,38 +130,7 @@ async def main() -> None:
     # и учитывать отправленное в каждом вызове — значит забыть в половине мест.
     bot.session.middleware(TrackSentMessagesMiddleware())
 
-    dispatcher = Dispatcher(storage=MemoryStorage())
-
-    # Бот публичный: сплошного owner-шлюза больше нет, приватны только
-    # админ-команды — они висят на фильтре IsOwner.
-    dispatcher.update.outer_middleware(DbSessionMiddleware(database))
-    # Строго после сессии: журнал пишется в ту же транзакцию, иначе вторая
-    # сессия конкурировала бы за блокировку SQLite.
-    dispatcher.update.outer_middleware(ChatLogMiddleware())
-
-    dispatcher["prompt_builder"] = PromptBuilder()
-    dispatcher["llm_router"] = LLMRouter(settings)
-    dispatcher["vault"] = KeyVault(settings.encryption_key or settings.telegram_bot_token)
-    dispatcher["settings"] = settings
-
-    admin.router.message.filter(IsOwner(settings.owner_user_id))
-
-    dispatcher.include_routers(
-        start.router,
-        api_key.router,
-        admin.router,
-        # До profile и analysis: кнопка присылает обычный текст, и любой роутер
-        # с F.text выше перехватил бы её как ответ FSM или как описание вещи.
-        menu.router,
-        profile.router,
-        styles.router,
-        wardrobe.router,
-        wishlist.router,
-        history.router,
-        cleanup.router,
-        model_selection.router,
-        analysis.router,  # последним: ловит свободный текст
-    )
+    dispatcher = build_dispatcher(database)
 
     await bot.set_my_commands(COMMANDS)
     logger.info(

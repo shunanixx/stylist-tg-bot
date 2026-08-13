@@ -12,6 +12,10 @@ class User(Base):
     __tablename__ = "users"
 
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # Telegram присылает их с каждым апдейтом, но за нас не хранит: узнать,
+    # кто скрывается за id, кроме как из этих полей, потом уже негде (/numbers).
+    username: Mapped[str | None] = mapped_column(Text)
+    first_name: Mapped[str | None] = mapped_column(Text)
     # Float, а не INT из схемы: фактические параметры включают дробные (пояс 42.5)
     height_cm: Mapped[float | None] = mapped_column(Float)
     weight_kg: Mapped[float | None] = mapped_column(Float)

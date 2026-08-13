@@ -1,11 +1,15 @@
 """Учёт id сообщений: без него /clear нечего удалять."""
 
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
+from aiogram.types import Chat, Message, Update
+from aiogram.types import User as TgUser
 
 from db.crud import chat_log as chat_log_crud
+from db.crud import users as users_crud
 from db.database import Database
 from middlewares.chat_log import ChatLogMiddleware
 from services.chat_tracker import record, start_recording, stop_recording
@@ -39,6 +43,10 @@ async def session():
     database = Database("sqlite+aiosqlite:///:memory:")
     await database.create_schema()
     async with database.session() as session:
+        # Строку пользователя создаёт IdentityMiddleware до хендлера — журнал
+        # на неё только ссылается и сам никого не создаёт (иначе /forget
+        # воскрешал бы удалённого).
+        await users_crud.get_or_create_user(session, USER_ID)
         yield session
     await database.dispose()
 
@@ -138,3 +146,42 @@ async def test_record_outside_recording_is_ignored():
     """Фоновая отправка вне апдейта не должна падать."""
     stop_recording()
     record(CHAT_ID, 999)  # не бросает
+
+
+async def test_message_is_found_inside_a_real_update(session):
+    """Middleware висит на dispatcher.update — приходит Update, а не Message.
+
+    Без разворачивания апдейта в журнал не попадало ни одно сообщение
+    пользователя, и /clear всегда отвечал «чистить нечего».
+    """
+    update = Update(
+        update_id=1,
+        message=Message(
+            message_id=600,
+            date=datetime.now(timezone.utc),
+            chat=Chat(id=CHAT_ID, type="private"),
+            from_user=TgUser(id=USER_ID, is_bot=False, first_name="Тест"),
+            text="привет",
+        ),
+    )
+
+    async def handler(event, data):
+        record(CHAT_ID, 601)
+
+    await ChatLogMiddleware()(handler, update, _data(session))
+
+    assert await chat_log_crud.list_ids(session, USER_ID, CHAT_ID) == [601, 600]
+
+
+async def test_journal_does_not_resurrect_a_forgotten_user(session, middleware):
+    """/forget удаляет строку, а журнал пишется после хендлера — раньше он
+    тут же создавал её заново, и человек возвращался в /numbers."""
+
+    async def handler(event, data):
+        await users_crud.delete_user(session, USER_ID)
+        record(CHAT_ID, 701)
+
+    await middleware(handler, FakeMessage(700), _data(session))
+
+    assert await users_crud.get_user(session, USER_ID) is None
+    assert await chat_log_crud.list_ids(session, USER_ID, CHAT_ID) == []

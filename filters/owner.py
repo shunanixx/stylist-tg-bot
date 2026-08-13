@@ -12,5 +12,5 @@ class IsOwner(BaseFilter):
     async def __call__(self, event: TelegramObject) -> bool:
         if not self.owner_user_id:
             return False
-        user = getattr(event, "from_user", None)
+        user = getattr(event, "from_user", None)   
         return user is not None and user.id == self.owner_user_id

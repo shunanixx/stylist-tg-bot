@@ -4,11 +4,13 @@ from typing import Annotated
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+PROJECT_DIR = Path(__file__).parent
+
 
 class Settings(BaseSettings):
     # Путь от файла конфига, а не от cwd: бот запускают и из корня workspace.
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).parent / ".env",
+        env_file=PROJECT_DIR / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -59,6 +61,22 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("database_url")
+    @classmethod
+    def _absolute_sqlite_path(cls, value: str) -> str:
+        """Файл БД — рядом с проектом, а не рядом с cwd.
+
+        Относительный путь резолвится от рабочего каталога, и запуск из корня
+        workspace (отладчиком VS Code, `python "cloth ai/bot.py"`) заводил
+        вторую базу: команды отвечают, а гардероб, ключи и история пустые.
+        """
+        prefix, separator, tail = value.partition(":///")
+        if not separator or not prefix.startswith("sqlite") or tail.startswith("/"):
+            return value
+        if tail in ("", ":memory:"):
+            return value
+        return f"{prefix}:///{(PROJECT_DIR / tail).resolve()}"
 
     @model_validator(mode="after")
     def validate_default_provider_enabled(self) -> "Settings":

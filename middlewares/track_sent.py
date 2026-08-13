@@ -12,7 +12,7 @@ from aiogram.client.session.middlewares.base import (
     NextRequestMiddlewareType,
 )
 from aiogram.methods import TelegramMethod
-from aiogram.methods.base import Response, TelegramType
+from aiogram.methods.base import TelegramType
 from aiogram.types import Message
 
 from services.chat_tracker import record
@@ -26,13 +26,15 @@ class TrackSentMessagesMiddleware(BaseRequestMiddleware):
         make_request: NextRequestMiddlewareType[TelegramType],
         bot: Bot,
         method: TelegramMethod[TelegramType],
-    ) -> Response[TelegramType]:
-        response = await make_request(bot, method)
+    ) -> TelegramType:
+        result = await make_request(bot, method)
 
-        result = getattr(response, "result", None)
+        # `make_request` отдаёт уже развёрнутый результат, а не Response: искать
+        # в нём `.result` — значит не записать ни одного id, и /clear молча
+        # оставит в чате все ответы бота.
         # sendMediaGroup возвращает список, остальные send* — одно сообщение
         for item in result if isinstance(result, list) else [result]:
             if isinstance(item, Message):
                 record(item.chat.id, item.message_id)
 
-        return response
+        return result
