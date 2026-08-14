@@ -21,6 +21,10 @@ __pycache__/
 *.db-journal
 *.db.bak-*
 *.bak
+*.db
+*.db.bak*
+*.db-shm
+*.db-wal
 
 # Логи
 *.log
