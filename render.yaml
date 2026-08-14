@@ -1,0 +1,57 @@
+# Blueprint для Render: настройки сервиса лежат в репозитории, а не только
+# в панели — сервис пересоздаётся одним «New Blueprint» и не расходится
+# с кодом. Секреты сюда не попадают: у них sync: false, значение вводится
+# в панели (см. README, раздел «Деплой»).
+#
+# Базы данных здесь нет сознательно: бесплатный Render Postgres живёт 30 дней
+# и удаляется, поэтому DATABASE_URL указывает на внешний бесплатный Postgres
+# (Neon или Supabase).
+services:
+  - type: web
+    name: stylist-tg-bot
+    runtime: python
+    plan: free
+    # Ближе к Telegram и к пользователям — меньше задержка на каждый апдейт.
+    region: frankfurt
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    # Свой роут, не «/»: по «/» на free-тарифе Render отдаёт заглушку,
+    # и проверка проходила бы даже с мёртвым процессом.
+    healthCheckPath: /healthz
+    envVars:
+      # Free-тариф Render — это web service: процесс обязан слушать порт,
+      # а фоновый воркер под polling доступен только на платном.
+      - key: RUN_MODE
+        value: webhook
+      # WEBHOOK_BASE_URL не задаём: config.py читает RENDER_EXTERNAL_URL,
+      # который Render подставляет сам — адрес не нужно знать заранее.
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      # Мастер-ключ шифрования чужих ключей Gemini. Задать явно и не менять:
+      # без него он выводится из токена бота, и смена токена сделает
+      # сохранённые ключи пользователей нечитаемыми.
+      - key: ENCRYPTION_KEY
+        sync: false
+      # Необязательные: id владельца (/stats, /numbers) и его резервный ключ.
+      - key: OWNER_USER_ID
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: ENABLED_PROVIDERS
+        value: gemini
+      - key: DEFAULT_LLM_PROVIDER
+        value: gemini
+      - key: MAX_CONCURRENT_AGENTS
+        value: "2"
+      - key: MAX_PHOTOS_PER_ANALYSIS
+        value: "3"
+      - key: LOG_LEVEL
+        value: INFO

@@ -30,3 +30,6 @@ __pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Любые копии базы: bak, empty-bak, дампы — шаблоны выше их не ловили
+*.db*

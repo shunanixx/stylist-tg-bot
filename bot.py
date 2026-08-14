@@ -7,6 +7,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 
 from config import Settings, settings
 from db.database import Database
@@ -35,6 +37,10 @@ from services.llm_router import LLMRouter
 from services.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
+
+# Хостинг дёргает его как health check, keep-alive-крон — как повод не дать
+# сервису уснуть. В COMMANDS не путать: это HTTP, а не команда бота.
+HEALTH_PATH = "/healthz"
 
 COMMANDS = [
     BotCommand(command="start", description="Начало"),
@@ -111,6 +117,65 @@ def build_dispatcher(database: Database, cfg: Settings = settings) -> Dispatcher
     return dispatcher
 
 
+async def health(_: web.Request) -> web.Response:
+    """Живость процесса — без обращения к БД.
+
+    Соблазн проверять здесь и базу есть, но её дёргают каждые несколько минут
+    health check хостинга и keep-alive-крон: бесплатный serverless-Postgres
+    при этом не заснёт никогда и сожжёт месячную квоту (см. engine_options).
+    Падение БД видно в логах разбора, а не в пинге.
+    """
+    return web.Response(text="ok")
+
+
+def build_web_app(bot: Bot, dispatcher: Dispatcher, cfg: Settings = settings) -> web.Application:
+    """HTTP-приложение вебхука: aiohttp, а не новый фреймворк.
+
+    aiohttp уже стоит — на нём работает сам aiogram, и его же обёртка
+    (SimpleRequestHandler) умеет проверять секретный заголовок Telegram.
+    Заводить ради одного POST-роута FastAPI значило бы тянуть второй сервер
+    в тот же процесс.
+    """
+    app = web.Application()
+    app.router.add_get(HEALTH_PATH, health)
+    # handle_in_background по умолчанию: Telegram получает 200 сразу, а разбор
+    # (13 с у модели) идёт своей задачей. Иначе долгий ответ выглядит для
+    # Telegram как таймаут, и он присылает тот же апдейт заново.
+    SimpleRequestHandler(
+        dispatcher=dispatcher,
+        bot=bot,
+        secret_token=cfg.resolved_webhook_secret,
+    ).register(app, path=cfg.webhook_path)
+    setup_application(app, dispatcher, bot=bot)
+    return app
+
+
+async def run_webhook(bot: Bot, dispatcher: Dispatcher, cfg: Settings = settings) -> None:
+    await bot.set_webhook(
+        url=cfg.webhook_url,
+        secret_token=cfg.resolved_webhook_secret,
+        drop_pending_updates=True,
+        # Только то, на что есть хендлеры: остальное Telegram даже не отправит.
+        allowed_updates=dispatcher.resolve_used_update_types(),
+    )
+    runner = web.AppRunner(build_web_app(bot, dispatcher, cfg))
+    await runner.setup()
+    site = web.TCPSite(runner, host=cfg.webhook_host, port=cfg.port)
+    await site.start()
+    logger.info(
+        "Вебхук: слушаю %s:%s, путь %s, health %s",
+        cfg.webhook_host,
+        cfg.port,
+        cfg.webhook_path,
+        HEALTH_PATH,
+    )
+    try:
+        # Апдейты обрабатывает aiohttp; процессу остаётся не завершиться.
+        await asyncio.Event().wait()
+    finally:
+        await runner.cleanup()
+
+
 async def main() -> None:
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -134,13 +199,19 @@ async def main() -> None:
 
     await bot.set_my_commands(COMMANDS)
     logger.info(
-        "Бот запущен (публичный режим, ключ у каждого свой). Провайдеры: %s, модель: %s",
+        "Бот запущен (%s, публичный режим, ключ у каждого свой). Провайдеры: %s, модель: %s",
+        settings.run_mode,
         ", ".join(settings.enabled_providers),
         settings.gemini_model,
     )
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        await dispatcher.start_polling(bot)
+        if settings.run_mode == "webhook":
+            await run_webhook(bot, dispatcher)
+        else:
+            # Вебхук и polling взаимно исключают друг друга: пока он установлен,
+            # getUpdates отвечает 409.
+            await bot.delete_webhook(drop_pending_updates=True)
+            await dispatcher.start_polling(bot)
     finally:
         await bot.session.close()
         await database.dispose()
