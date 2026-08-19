@@ -151,6 +151,13 @@ def build_web_app(bot: Bot, dispatcher: Dispatcher, cfg: Settings = settings) ->
 
 
 async def run_webhook(bot: Bot, dispatcher: Dispatcher, cfg: Settings = settings) -> None:
+    # Сервер поднимаем до set_webhook: иначе Telegram может прислать первый
+    # апдейт раньше, чем TCPSite начнёт слушать порт, и тот апдейт потеряется
+    # (или задержится до следующей попытки Telegram) сразу после каждого деплоя.
+    runner = web.AppRunner(build_web_app(bot, dispatcher, cfg))
+    await runner.setup()
+    site = web.TCPSite(runner, host=cfg.webhook_host, port=cfg.port)
+    await site.start()
     await bot.set_webhook(
         url=cfg.webhook_url,
         secret_token=cfg.resolved_webhook_secret,
@@ -158,10 +165,6 @@ async def run_webhook(bot: Bot, dispatcher: Dispatcher, cfg: Settings = settings
         # Только то, на что есть хендлеры: остальное Telegram даже не отправит.
         allowed_updates=dispatcher.resolve_used_update_types(),
     )
-    runner = web.AppRunner(build_web_app(bot, dispatcher, cfg))
-    await runner.setup()
-    site = web.TCPSite(runner, host=cfg.webhook_host, port=cfg.port)
-    await site.start()
     logger.info(
         "Вебхук: слушаю %s:%s, путь %s, health %s",
         cfg.webhook_host,

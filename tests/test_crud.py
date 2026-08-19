@@ -77,6 +77,7 @@ async def test_submission_flow_stores_result_and_meta(session):
     await submissions_crud.set_item_meta(
         session,
         submission_id=submission.id,
+        user_id=USER_ID,
         item_title="Куртка Carhartt",
         item_category="верхняя одежда",
         final_verdict="брать",
@@ -89,6 +90,29 @@ async def test_submission_flow_stores_result_and_meta(session):
     stored = await submissions_crud.get_submission(session, USER_ID, submission.id)
     assert stored.item_title == "Куртка Carhartt"
     assert stored.final_verdict == "брать"
+
+
+async def test_set_item_meta_refuses_a_submission_belonging_to_another_user(session):
+    """Как get_submission: чужой submission_id не должен молча перезаписаться,
+    например из-за гонки между двумя параллельными разборами."""
+    OTHER_USER_ID = USER_ID + 1
+    await users_crud.get_or_create_user(session, USER_ID)
+    submission = await submissions_crud.create_submission(
+        session, USER_ID, input_type="text", input_text="куртка Carhartt"
+    )
+
+    result = await submissions_crud.set_item_meta(
+        session,
+        submission_id=submission.id,
+        user_id=OTHER_USER_ID,
+        item_title="Чужое название",
+        item_category="верх",
+        final_verdict="брать",
+    )
+
+    assert result is None
+    stored = await submissions_crud.get_submission(session, USER_ID, submission.id)
+    assert stored.item_title is None
 
 
 async def test_multiple_results_per_submission(session):
@@ -112,7 +136,7 @@ async def test_recent_submissions_skips_unanalyzed_and_is_chronological(session)
     await users_crud.get_or_create_user(session, USER_ID)
     for title in ("Худи", "Кеды", "Джинсы"):
         submission = await submissions_crud.create_submission(session, USER_ID, "text", title)
-        await submissions_crud.set_item_meta(session, submission.id, title, None, "брать")
+        await submissions_crud.set_item_meta(session, submission.id, USER_ID, title, None, "брать")
     await submissions_crud.create_submission(session, USER_ID, "text", "без разбора")
 
     recent = await submissions_crud.recent_submissions(session, USER_ID, limit=2)

@@ -2,10 +2,12 @@
 
 import pytest
 import pytest_asyncio
+from aiogram.exceptions import TelegramBadRequest
 
+from db.crud import submissions as submissions_crud
 from db.crud import wardrobe as wardrobe_crud
 from db.database import Database
-from handlers.wardrobe import cmd_add, cmd_remove, cmd_wardrobe
+from handlers.wardrobe import add_from_analysis, cmd_add, cmd_remove, cmd_wardrobe
 
 USER_ID = 321
 OTHER_USER_ID = 322
@@ -23,6 +25,30 @@ class FakeMessage:
 class FakeCommand:
     def __init__(self, args: str | None):
         self.args = args
+
+
+class _CallbackMessage:
+    def __init__(self, edit_fails: bool = False):
+        self.sent: list[str] = []
+        self._edit_fails = edit_fails
+
+    async def edit_reply_markup(self, reply_markup=None, **kwargs):
+        if self._edit_fails:
+            raise TelegramBadRequest(method=None, message="message to edit not found")
+
+    async def answer(self, text: str, **kwargs):
+        self.sent.append(text)
+
+
+class FakeCallback:
+    def __init__(self, data: str, user_id: int = USER_ID, message_edit_fails: bool = False):
+        self.data = data
+        self.from_user = type("U", (), {"id": user_id})()
+        self.answers: list[str] = []
+        self.message = _CallbackMessage(edit_fails=message_edit_fails)
+
+    async def answer(self, text: str = "", show_alert: bool = False, **kwargs):
+        self.answers.append(text)
 
 
 @pytest_asyncio.fixture
@@ -139,3 +165,33 @@ async def test_last_removal_says_the_wardrobe_is_empty(session):
     await cmd_remove(message, FakeCommand("1"), session)
 
     assert "пуст" in message.sent[0].lower()
+
+
+async def _analyzed_submission(session, title="Куртка Carhartt"):
+    submission = await submissions_crud.create_submission(session, USER_ID, "text", title)
+    await submissions_crud.add_result(
+        session,
+        submission_id=submission.id,
+        provider="gemini",
+        verdict="брать",
+        full_response="разбор",
+        raw_response="разбор",
+    )
+    await submissions_crud.set_item_meta(
+        session, submission.id, USER_ID, title, "верхняя одежда", "брать"
+    )
+    return submission
+
+
+async def test_add_from_analysis_survives_a_stale_keyboard(session):
+    """Раньше edit_reply_markup падал без try/except: сообщение с разбором
+    старше 48 часов или уже нажатая кнопка обрывали хендлер прямо после
+    успешной записи в БД, и пользователь не видел обновлённый список."""
+    submission = await _analyzed_submission(session)
+    callback = FakeCallback(f"wardrobe:add:{submission.id}", message_edit_fails=True)
+
+    await add_from_analysis(callback, session)
+
+    items = await wardrobe_crud.list_items(session, USER_ID)
+    assert [i.title for i in items] == ["Куртка Carhartt"]
+    assert callback.message.sent, "обновлённый список должен всё равно прийти"

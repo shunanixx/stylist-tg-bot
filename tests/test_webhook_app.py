@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import contextlib
 from datetime import datetime, timezone
 
 import pytest
@@ -14,8 +15,9 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiohttp.test_utils import TestClient, TestServer
+from aiohttp.web import TCPSite
 
-from bot import HEALTH_PATH, build_web_app
+from bot import HEALTH_PATH, build_web_app, run_webhook
 from config import Settings
 
 TOKEN = "123456789:AAHfake-token-for-webhook-tests"
@@ -135,3 +137,50 @@ async def test_webhook_path_is_not_the_root(client, cfg):
 
 async def test_health_path_does_not_accept_updates(client):
     assert (await client.post(HEALTH_PATH, json=_update())).status == 405
+
+
+async def test_server_listens_before_set_webhook_is_called(monkeypatch):
+    """Раньше bot.set_webhook уходил до старта TCPSite: первый апдейт от
+    Telegram, доставленный сразу после (пере)деплоя, попадал бы в порт,
+    который ещё не слушает, и терялся до следующей попытки Telegram."""
+    cfg = Settings(
+        _env_file=None,
+        telegram_bot_token=TOKEN,
+        run_mode="webhook",
+        webhook_base_url="https://bot.example.com",
+        webhook_secret="fake-webhook-secret",
+        webhook_host="127.0.0.1",
+        port=0,  # ОС сама выберет свободный порт
+    )
+    dispatcher = Dispatcher()
+    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+
+    order: list[str] = []
+
+    async def fake_set_webhook(**kwargs):
+        order.append("set_webhook")
+        return True
+
+    monkeypatch.setattr(bot, "set_webhook", fake_set_webhook)
+
+    original_start = TCPSite.start
+
+    async def recording_start(self, *args, **kwargs):
+        result = await original_start(self, *args, **kwargs)
+        order.append("site_start")
+        return result
+
+    monkeypatch.setattr(TCPSite, "start", recording_start)
+
+    task = asyncio.create_task(run_webhook(bot, dispatcher, cfg))
+    try:
+        deadline = asyncio.get_running_loop().time() + 2.0
+        while len(order) < 2 and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        await bot.session.close()
+
+    assert order == ["site_start", "set_webhook"]

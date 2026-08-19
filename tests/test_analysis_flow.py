@@ -149,7 +149,7 @@ async def test_analysis_without_key_stops_before_model(session, builder, vault):
 async def test_previous_verdicts_feed_next_prompt(keyed_session, builder, vault):
     submission = await submissions_crud.create_submission(keyed_session, USER_ID, "text", "Кеды")
     await submissions_crud.set_item_meta(
-        keyed_session, submission.id, "Кеды Puma", "обувь", "не брать"
+        keyed_session, submission.id, USER_ID, "Кеды Puma", "обувь", "не брать"
     )
     llm = FakeRouter(LLMResponse(raw_text=FULL_ANSWER))
 
@@ -168,6 +168,41 @@ async def test_provider_error_reports_without_writing_db(keyed_session, builder,
 
     assert message.status_edits == ["Провайдер не ответил. Попробуй ещё раз через минуту."]
     assert await submissions_crud.recent_submissions(keyed_session, USER_ID) == []
+
+
+async def test_error_with_reported_usage_still_logs_the_real_spend(
+    keyed_session, builder, vault
+):
+    """MAX_TOKENS съеденный thinking'ом даёт пустой текст и LLMError, но Google
+    уже списал tokens_input/tokens_output — их нужно сохранить, а не потерять."""
+    from sqlalchemy import select
+
+    from db.models import Submission
+
+    message = FakeMessage("Куртка Carhartt, M")
+    llm = FakeRouter(
+        error=LLMError(
+            "gemini",
+            "Пустой ответ, finish_reason=MAX_TOKENS",
+            tokens_input=1200,
+            tokens_output=2048,
+        )
+    )
+
+    await handle_text_analysis(message, keyed_session, builder, llm, vault)
+
+    # В /history такой разбор не всплывает: item_title не проставлен
+    assert await submissions_crud.recent_submissions(keyed_session, USER_ID) == []
+
+    submission = (
+        await keyed_session.scalars(
+            select(Submission).where(Submission.user_id == USER_ID)
+        )
+    ).one()
+    results = await submissions_crud.results_for(keyed_session, submission.id)
+    assert len(results) == 1
+    assert results[0].tokens_input == 1200
+    assert results[0].tokens_output == 2048
 
 
 async def test_disabled_provider_message(keyed_session, builder, vault):

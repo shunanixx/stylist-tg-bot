@@ -2,6 +2,7 @@
 
 import pytest
 import pytest_asyncio
+from aiogram.exceptions import TelegramBadRequest
 
 from db.crud import submissions as submissions_crud
 from db.crud import wardrobe as wardrobe_crud
@@ -30,22 +31,25 @@ class FakeMessage:
 
 
 class FakeCallback:
-    def __init__(self, data: str, user_id: int = USER_ID):
+    def __init__(self, data: str, user_id: int = USER_ID, message_edit_fails: bool = False):
         self.data = data
         self.from_user = type("U", (), {"id": user_id})()
         self.answers: list[str] = []
-        self.message = _CallbackMessage()
+        self.message = _CallbackMessage(edit_fails=message_edit_fails)
 
     async def answer(self, text: str = "", show_alert: bool = False, **kwargs):
         self.answers.append(text)
 
 
 class _CallbackMessage:
-    def __init__(self):
+    def __init__(self, edit_fails: bool = False):
         self.markup_cleared = False
         self.sent: list[str] = []
+        self._edit_fails = edit_fails
 
     async def edit_reply_markup(self, reply_markup=None, **kwargs):
+        if self._edit_fails:
+            raise TelegramBadRequest(method=None, message="message to edit not found")
         self.markup_cleared = reply_markup is None
 
     async def answer(self, text: str, **kwargs):
@@ -68,7 +72,7 @@ async def session():
 
 async def _submission(session, title="Куртка Carhartt", verdict="брать", category="верхняя одежда"):
     submission = await submissions_crud.create_submission(session, USER_ID, "text", title)
-    await submissions_crud.set_item_meta(session, submission.id, title, category, verdict)
+    await submissions_crud.set_item_meta(session, submission.id, USER_ID, title, category, verdict)
     return submission
 
 
@@ -85,6 +89,20 @@ async def test_add_from_analysis_keeps_verdict(session):
     assert items[0].category == "верхняя одежда"
     assert items[0].source_submission_id == submission.id
     assert callback.message.markup_cleared
+
+
+async def test_add_from_analysis_survives_a_stale_keyboard(session):
+    """Раньше edit_reply_markup падал без try/except: сообщение с разбором
+    старше 48 часов или уже нажатая кнопка обрывали хендлер прямо после
+    успешной записи в БД, и пользователь не видел обновлённый список."""
+    submission = await _submission(session)
+    callback = FakeCallback(f"wishlist:add:{submission.id}", message_edit_fails=True)
+
+    await add_from_analysis(callback, session)
+
+    items = await wishlist_crud.list_items(session, USER_ID)
+    assert [i.title for i in items] == ["Куртка Carhartt"]
+    assert callback.message.sent, "обновлённый список должен всё равно прийти"
 
 
 async def test_same_submission_not_added_twice(session):

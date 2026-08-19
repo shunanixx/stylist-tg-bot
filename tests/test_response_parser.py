@@ -76,3 +76,27 @@ def test_empty_input(raw):
 
     assert text == ""
     assert data["verdict"] == VERDICT_UNKNOWN
+
+
+def test_hedge_starting_with_ne_is_not_a_hard_skip():
+    """«не определено»/«не уверен» — модель отклонилась от формата брать/не
+    брать, но это не то же самое, что уверенное «не брать»."""
+    raw = 'Разбор\n===DATA===\n{"title": "t", "verdict": "не определено"}'
+    _, data = parse_llm_response(raw)
+
+    assert data["verdict"] == VERDICT_UNKNOWN
+
+
+def test_stray_braces_after_data_block_do_not_break_extraction():
+    """Требование «после JSON-блока текста быть не должно» модель иногда
+    нарушает — случайная { в хвосте не должна утащить парсер за пределы
+    настоящего объекта."""
+    raw = (
+        'Разбор\n===DATA===\n{"title": "Куртка Zara", "verdict": "брать", '
+        '"category": "верх"} \nПрим: цена {уточняется}'
+    )
+    _, data = parse_llm_response(raw)
+
+    assert data["title"] == "Куртка Zara"
+    assert data["verdict"] == VERDICT_TAKE
+    assert data["category"] == "верх"

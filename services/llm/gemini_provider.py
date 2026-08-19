@@ -40,18 +40,30 @@ class GeminiProvider(LLMProvider):
         except Exception as exc:  # SDK бросает свои типы ошибок
             raise LLMError(self.name, f"{type(exc).__name__}: {exc}") from exc
         latency_ms = int((time.perf_counter() - started) * 1000)
+        usage = response.usage_metadata
+        tokens_input = getattr(usage, "prompt_token_count", None) or 0
+        # thinking-токены тарифицируются как output, поэтому учитываем их тоже
+        tokens_output = (getattr(usage, "candidates_token_count", None) or 0) + (
+            getattr(usage, "thoughts_token_count", None) or 0
+        )
 
         text = (response.text or "").strip()
         if not text:
-            raise LLMError(self.name, self._describe_empty(response))
+            # Google уже списал tokens_input/tokens_output (типичный случай —
+            # MAX_TOKENS съеденный thinking'ом) даже без видимого текста ответа.
+            # Не приложить их к ошибке значило бы потерять реальный расход из БД.
+            raise LLMError(
+                self.name,
+                self._describe_empty(response),
+                tokens_input=tokens_input,
+                tokens_output=tokens_output,
+                latency_ms=latency_ms,
+            )
 
-        usage = response.usage_metadata
         return LLMResponse(
             raw_text=text,
-            tokens_input=getattr(usage, "prompt_token_count", None) or 0,
-            # thinking-токены тарифицируются как output, поэтому учитываем их тоже
-            tokens_output=(getattr(usage, "candidates_token_count", None) or 0)
-            + (getattr(usage, "thoughts_token_count", None) or 0),
+            tokens_input=tokens_input,
+            tokens_output=tokens_output,
             latency_ms=latency_ms,
         )
 

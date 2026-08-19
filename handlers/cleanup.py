@@ -10,6 +10,7 @@ import logging
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,7 +31,14 @@ NOTHING_TO_CLEAR = (
 
 
 @router.message(Command("clear"))
-async def cmd_clear(message: Message, session: AsyncSession) -> None:
+async def cmd_clear(
+    message: Message, session: AsyncSession, state: FSMContext | None = None
+) -> None:
+    # Команда посреди чужого FSM-диалога обязана прервать его — иначе
+    # следующий текст пользователя уйдёт в тот незакрытый ввод.
+    if state is not None and await state.get_state() is not None:
+        await state.clear()
+        await message.answer("Ввод прерван — вернулся в меню.")
     tracked = await chat_log_crud.count_tracked(
         session, message.from_user.id, message.chat.id
     )

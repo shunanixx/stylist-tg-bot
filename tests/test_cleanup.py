@@ -3,6 +3,9 @@
 import pytest
 import pytest_asyncio
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from db.crud import chat_log as chat_log_crud
 from db.crud import styles as styles_crud
@@ -12,6 +15,7 @@ from db.crud import wardrobe as wardrobe_crud
 from db.crud import wishlist as wishlist_crud
 from db.database import Database
 from handlers.cleanup import cancel_clear, cmd_clear, confirm_clear, delete_messages
+from states.list_states import WardrobeInput
 
 USER_ID = 8080
 OTHER_USER_ID = 8081
@@ -106,7 +110,7 @@ async def test_clear_removes_messages_but_keeps_data(session):
         session, USER_ID, "text", "Куртка Carhartt"
     )
     await submissions_crud.set_item_meta(
-        session, submission.id, "Куртка Carhartt", "верхняя одежда", "брать"
+        session, submission.id, USER_ID, "Куртка Carhartt", "верхняя одежда", "брать"
     )
     await wardrobe_crud.add_item(session, USER_ID, "Серый свитшот")
     await wishlist_crud.add_item(session, USER_ID, "Кеды Puma")
@@ -202,6 +206,22 @@ async def test_nothing_to_clear_explains_48h_limit(session):
     await cmd_clear(message, session)
 
     assert "48" in message.sent[0]
+
+
+async def test_clear_mid_wardrobe_add_clears_the_pending_state(session):
+    """Раньше /clear посреди «жду название вещи в /wardrobe» не трогал
+    FSM — и следующее обычное сообщение уходило в БД как название вещи."""
+    state = FSMContext(
+        storage=MemoryStorage(),
+        key=StorageKey(bot_id=1, chat_id=CHAT_ID, user_id=USER_ID),
+    )
+    await state.set_state(WardrobeInput.title)
+    message = FakeMessage()
+
+    await cmd_clear(message, session, state)
+
+    assert await state.get_state() is None
+    assert "Ввод прерван" in message.sent[0]
 
 
 # --- пачки и старые сообщения -------------------------------------------

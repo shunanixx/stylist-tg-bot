@@ -58,9 +58,13 @@ def decorate_sections(text: str, verdict: str | None = None) -> str:
         if number not in SECTION_ICONS or not _looks_like_heading(match.group("rest")):
             continue
 
+        # Повторный проход не удваивает иконку сам по себе: у уже украшенной
+        # строки перед номером стоит emoji, и `_HEADING_RE` требует, чтобы
+        # номер шёл сразу после отступа, — такая строка просто не матчится
+        # выше. Проверять «иконка есть в строке где-то» нельзя: если модель
+        # сама вставила такой же emoji не в начале, пункт остался бы без
+        # иконки бота.
         icon = verdict_icon(verdict) if number == VERDICT_POINT else SECTION_ICONS[number]
-        if icon in line:  # повторный проход не должен удваивать иконку
-            continue
         lines[index] = f"{match.group('indent')}{icon} {match.group('body')}"
 
     return "\n".join(lines)

@@ -9,6 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from db.crud import users as users_crud
 from db.database import Database
 from handlers.profile import cmd_profile, cmd_setup, process_measurement
+from states.onboarding_states import Onboarding
 
 USER_ID = 5150
 CHAT_ID = 5150
@@ -218,3 +219,30 @@ async def test_profile_of_a_new_user_is_all_dashes(dialog, session, state):
 
     shown = dialog.texts[-1]
     assert shown.count("—") >= 6
+
+
+async def test_other_command_mid_setup_is_rejected_not_parsed_as_a_number(
+    dialog, session, state
+):
+    """/wardrobe посреди /setup не должно попадать в parse_value: раньше это
+    давало сбивающее с толку «Нужно число» вместо явного «сначала /cancel»."""
+    await cmd_setup(dialog.user_says("/setup"), state)
+
+    await process_measurement(dialog.user_says("/wardrobe"), session, state)
+
+    reply = dialog.texts[-1]
+    assert "/cancel" in reply
+    assert "Нужно число" not in reply
+    assert await state.get_state() == Onboarding.height.state
+
+
+async def test_setup_state_survives_an_interrupting_command(dialog, session, state):
+    """Диалог не должен молча ломаться: после отклонённой команды следующий
+    настоящий ответ обязан засчитаться на тот же шаг (рост)."""
+    await cmd_setup(dialog.user_says("/setup"), state)
+
+    await process_measurement(dialog.user_says("/wardrobe"), session, state)
+    await process_measurement(dialog.user_says("180"), session, state)
+
+    user = await users_crud.get_user(session, USER_ID)
+    assert user.height_cm == 180

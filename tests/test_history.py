@@ -2,10 +2,14 @@
 
 import pytest
 import pytest_asyncio
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from db.crud import submissions as submissions_crud
 from db.database import Database
 from handlers.history import cmd_history, cmd_show
+from states.list_states import WardrobeInput
 
 USER_ID = 6161
 OTHER_USER_ID = 6162
@@ -47,7 +51,7 @@ async def _analyzed(session, title, verdict="брать", user_id=USER_ID):
         full_response=f"Разбор: {title}",
         raw_response=f"Разбор: {title}",
     )
-    await submissions_crud.set_item_meta(session, submission.id, title, "верх", verdict)
+    await submissions_crud.set_item_meta(session, submission.id, USER_ID, title, "верх", verdict)
     return submission
 
 
@@ -152,3 +156,32 @@ async def test_empty_history_asks_for_an_item(session):
     await cmd_history(message, session)
 
     assert "Разборов пока нет" in message.sent[0]
+
+
+async def test_history_mid_wardrobe_add_clears_the_pending_state(session):
+    """Раньше /history посреди «жду название вещи в /wardrobe» не трогал
+    FSM — и следующее обычное сообщение уходило в БД как название вещи."""
+    state = FSMContext(
+        storage=MemoryStorage(),
+        key=StorageKey(bot_id=1, chat_id=USER_ID, user_id=USER_ID),
+    )
+    await state.set_state(WardrobeInput.title)
+    message = FakeMessage()
+
+    await cmd_history(message, session, state)
+
+    assert await state.get_state() is None
+    assert "Ввод прерван" in message.sent[0]
+
+
+async def test_show_mid_wardrobe_add_clears_the_pending_state(session):
+    state = FSMContext(
+        storage=MemoryStorage(),
+        key=StorageKey(bot_id=1, chat_id=USER_ID, user_id=USER_ID),
+    )
+    await state.set_state(WardrobeInput.title)
+    message = FakeMessage()
+
+    await cmd_show(message, FakeCommand(""), session, state)
+
+    assert await state.get_state() is None

@@ -1,5 +1,6 @@
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +25,14 @@ async def _recent_newest_first(session: AsyncSession, user_id: int):
 
 
 @router.message(Command("history"))
-async def cmd_history(message: Message, session: AsyncSession) -> None:
+async def cmd_history(
+    message: Message, session: AsyncSession, state: FSMContext | None = None
+) -> None:
+    # Команда посреди чужого FSM-диалога обязана прервать его — иначе
+    # следующий текст пользователя уйдёт в тот незакрытый ввод.
+    if state is not None and await state.get_state() is not None:
+        await state.clear()
+        await message.answer("Ввод прерван — вернулся в меню.")
     items = await _recent_newest_first(session, message.from_user.id)
     if not items:
         await message.answer("📜 Разборов пока нет. Пришли описание вещи или фото.")
@@ -48,8 +56,14 @@ async def cmd_history(message: Message, session: AsyncSession) -> None:
 
 @router.message(Command("show"))
 async def cmd_show(
-    message: Message, command: CommandObject, session: AsyncSession
+    message: Message,
+    command: CommandObject,
+    session: AsyncSession,
+    state: FSMContext | None = None,
 ) -> None:
+    if state is not None and await state.get_state() is not None:
+        await state.clear()
+        await message.answer("Ввод прерван — вернулся в меню.")
     items = await _recent_newest_first(session, message.from_user.id)
     submission = resolve_position(items, (command.args or "").strip())
     if submission is None:

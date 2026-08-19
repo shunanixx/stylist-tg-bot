@@ -72,10 +72,14 @@ async def handle_photo(
         if not msg.photo:
             continue
         largest = max(msg.photo, key=lambda p: p.width * p.height)
-        file_ids.append(largest.file_id)
         tg_file = await bot.get_file(largest.file_id)
         raw_bytes = await bot.download_file(tg_file.file_path)
         if raw_bytes is not None:
+            # file_ids должен перечислять ровно те фото, что видела модель:
+            # добавляем id только вместе с успешно скачанными данными, иначе
+            # /show и сохранённый submission ссылались бы на фото, которое
+            # модель не получила.
+            file_ids.append(largest.file_id)
             photo_data.append(downscale_image(raw_bytes.read()))
 
     if not photo_data:
@@ -160,6 +164,28 @@ async def _analyze_and_reply(
         )
     except LLMError as exc:
         logger.warning("Анализ не удался: %s", exc)
+        if exc.tokens_input is not None or exc.tokens_output is not None:
+            # Google уже списал эти токены (типично — MAX_TOKENS съеденный
+            # thinking'ом), даже если пользователь не получил текста ответа.
+            # Не залогировать их значило бы занизить фактический расход в БД.
+            failed_submission = await submissions_crud.create_submission(
+                session,
+                user.user_id,
+                input_type=input_type,
+                input_text=user_text or None,
+                photo_file_ids=photo_file_ids,
+            )
+            await submissions_crud.add_result(
+                session,
+                submission_id=failed_submission.id,
+                provider=provider_name,
+                verdict=None,
+                full_response=None,
+                raw_response=str(exc),
+                tokens_input=exc.tokens_input,
+                tokens_output=exc.tokens_output,
+                latency_ms=exc.latency_ms,
+            )
         await status.edit_text(_explain_llm_error(exc, key_source.is_own))
         return
     except (ValueError, NotImplementedError) as exc:
@@ -196,6 +222,7 @@ async def _analyze_and_reply(
     await submissions_crud.set_item_meta(
         session,
         submission_id=submission.id,
+        user_id=user.user_id,
         item_title=data["title"],
         item_category=data["category"],
         final_verdict=data["verdict"],

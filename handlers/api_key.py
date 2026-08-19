@@ -3,6 +3,7 @@ import logging
 from aiogram import Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +30,15 @@ async def cmd_apikey(
     session: AsyncSession,
     vault: KeyVault,
     settings: Settings,
+    state: FSMContext | None = None,
 ) -> None:
+    # Команда посреди чужого FSM-диалога (например, ввод названия вещи в
+    # /wardrobe) обязана прервать его — иначе следующий текст пользователя
+    # уйдёт в тот незакрытый ввод, как будто он ответ на старый вопрос.
+    if state is not None and await state.get_state() is not None:
+        await state.clear()
+        await message.answer("Ввод прерван — вернулся в меню.")
+
     # Аргумент берём из текста, а не из CommandObject: хендлер вызывается
     # и из тестов, и после /start, где фильтр команды не отрабатывал.
     parts = (message.text or "").split(maxsplit=1)
@@ -73,8 +82,15 @@ async def cmd_apikey(
 
 @router.message(Command("apikey_off"))
 async def cmd_apikey_off(
-    message: Message, session: AsyncSession, vault: KeyVault, settings: Settings
+    message: Message,
+    session: AsyncSession,
+    vault: KeyVault,
+    settings: Settings,
+    state: FSMContext | None = None,
 ) -> None:
+    if state is not None and await state.get_state() is not None:
+        await state.clear()
+        await message.answer("Ввод прерван — вернулся в меню.")
     user = await users_crud.get_or_create_user(session, message.from_user.id)
     if not vault.decrypt(user.google_api_key_enc):
         await message.answer("Своего ключа и не было.")

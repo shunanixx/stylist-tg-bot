@@ -11,7 +11,11 @@ DEFAULT_TITLE = "Без названия"
 CATEGORIES = ("верхняя одежда", "верх", "низ", "обувь", "аксессуар")
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
-_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+# Нежадный: блок данных — плоский однострочный объект без вложенных {}.
+# Жадный `.*}` захватывал бы случайную `{`/`}` в тексте после блока (см.
+# требование «после JSON-блока никакого текста быть не должно» — модель его
+# иногда нарушает) и портил валидный JSON.
+_OBJECT_RE = re.compile(r"\{.*?\}", re.DOTALL)
 
 
 def fallback_data() -> dict[str, Any]:
@@ -78,7 +82,7 @@ def normalize_verdict(value: Any) -> str:
     text = str(value).strip().lower().replace("ё", "е")
     if not text:
         return VERDICT_UNKNOWN
-    if "не брать" in text or "не стоит" in text or text.startswith("не "):
+    if "не брать" in text or "не стоит" in text:
         return VERDICT_SKIP
     if "брать" in text:
         return VERDICT_TAKE

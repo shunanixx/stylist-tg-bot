@@ -51,6 +51,16 @@ def test_second_pass_does_not_double_the_icon():
     assert decorate_sections(once, "брать") == once
 
 
+def test_own_icon_elsewhere_in_the_line_does_not_block_decoration():
+    """Идемпотентность держится на том, что уже украшенная строка не матчится
+    заголовком заново — а не на поиске символа иконки где-то в строке. Модель
+    сама иногда лепит emoji в заголовок (см. докстринг модуля); если он
+    совпал с иконкой раздела, пункт всё равно обязан получить иконку бота."""
+    text = "2. ПОДЛИННОСТЬ 🔍 ПРОВЕРЕНО ПО ФОТО\nВсё ок."
+    decorated = decorate_sections(text)
+    assert decorated.startswith(f"{SECTION_ICONS[2]} 2. ПОДЛИННОСТЬ")
+
+
 def test_numbers_inside_a_paragraph_stay_untouched():
     text = "12. джинсы тоже подойдут\n3. пара сотен сверху — не критично"
     assert decorate_sections(text) == text

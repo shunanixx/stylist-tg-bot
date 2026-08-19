@@ -153,7 +153,10 @@ async def add_from_analysis(callback: CallbackQuery, session: AsyncSession) -> N
     )
     await callback.answer(f"В гардеробе: {item.title}")
     if callback.message is not None:
-        await callback.message.edit_reply_markup(reply_markup=None)
+        # drop_keyboard сам глотает TelegramBadRequest: сообщение с разбором
+        # старше 48 часов или кнопку уже сняли — запись в БД уже прошла,
+        # и это не повод потерять показ обновлённого списка.
+        await list_ui.drop_keyboard(callback)
         # Всплывашка исчезает через секунду — обновлённый список остаётся в чате
         await _answer_list(
             callback.message,

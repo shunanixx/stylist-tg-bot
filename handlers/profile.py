@@ -69,6 +69,18 @@ async def process_measurement(
     # а цифры всё равно видны в сводке параметров.
     await _delete_quietly(message)
 
+    if text.startswith("/"):
+        # Другая команда во время /setup не должна выглядеть как «введи число»:
+        # /cancel ловит start.router раньше (он выше profile в bot.py), сюда
+        # долетают только команды разделов ниже по цепочке — их нужно явно
+        # отвергнуть, а не гадать по не-числу.
+        await _ask(
+            message,
+            state,
+            f"⚠️ Сейчас заполняем параметры. Сначала /cancel, потом команда.\n\n{measurement.question}",
+        )
+        return
+
     if text in SKIP_WORDS:
         value: float | None = None
     else:

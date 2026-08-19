@@ -51,13 +51,19 @@ async def add_result(
 async def set_item_meta(
     session: AsyncSession,
     submission_id: int,
+    user_id: int,
     item_title: str | None,
     item_category: str | None,
     final_verdict: str | None,
 ) -> Submission | None:
-    """Мета «основной» модели: краткое название, категория и итоговый вердикт."""
+    """Мета «основной» модели: краткое название, категория и итоговый вердикт.
+
+    Проверка владельца — как в get_submission: без неё чужой submission_id
+    (например, из гонки между двумя параллельными разборами) молча перезаписал
+    бы результат другого пользователя.
+    """
     submission = await session.get(Submission, submission_id)
-    if submission is None:
+    if submission is None or submission.user_id != user_id:
         return None
     submission.item_title = item_title
     submission.item_category = item_category

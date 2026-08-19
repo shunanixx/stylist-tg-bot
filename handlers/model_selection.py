@@ -1,5 +1,6 @@
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +12,14 @@ router = Router(name="model_selection")
 
 
 @router.message(Command("model"))
-async def cmd_model(message: Message, session: AsyncSession) -> None:
+async def cmd_model(
+    message: Message, session: AsyncSession, state: FSMContext | None = None
+) -> None:
+    # Команда посреди чужого FSM-диалога обязана прервать его — иначе
+    # следующий текст пользователя уйдёт в тот незакрытый ввод.
+    if state is not None and await state.get_state() is not None:
+        await state.clear()
+        await message.answer("Ввод прерван — вернулся в меню.")
     user = await users_crud.get_or_create_user(session, message.from_user.id)
     providers = settings.enabled_providers
     if len(providers) == 1:

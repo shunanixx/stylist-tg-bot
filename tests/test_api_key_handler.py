@@ -2,11 +2,15 @@
 
 import pytest
 import pytest_asyncio
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from db.crud import users as users_crud
 from db.database import Database
 from handlers.api_key import cmd_apikey, cmd_apikey_off
 from services.api_keys import resolve_api_key
+from states.list_states import WardrobeInput
 
 USER_ID = 777
 GOOD_KEY = "AIzaSyD-abcdefghijklmnopqrstuvwxyz012345"
@@ -40,6 +44,14 @@ async def session():
     async with database.session() as session:
         yield session
     await database.dispose()
+
+
+@pytest.fixture
+def state():
+    return FSMContext(
+        storage=MemoryStorage(),
+        key=StorageKey(bot_id=1, chat_id=USER_ID, user_id=USER_ID),
+    )
 
 
 @pytest.fixture
@@ -146,3 +158,38 @@ async def test_apikey_off_without_key_is_not_an_error(session, vault):
     await cmd_apikey_off(message, session, vault, Cfg())
 
     assert message.sent, "ответ нужен даже когда удалять нечего"
+
+
+async def test_apikey_mid_wardrobe_add_clears_the_pending_state(
+    session, vault, state
+):
+    """Раньше /apikey посреди «жду название вещи в /wardrobe» не трогал FSM —
+    и следующее обычное сообщение пользователя уходило в БД как название вещи."""
+    await state.set_state(WardrobeInput.title)
+    message = FakeMessage("/apikey")
+
+    await cmd_apikey(message, session, vault, Cfg(), state)
+
+    assert await state.get_state() is None
+    assert "Ввод прерван" in message.sent[0]
+
+
+async def test_apikey_off_mid_wardrobe_add_clears_the_pending_state(
+    session, vault, state
+):
+    await state.set_state(WardrobeInput.title)
+    message = FakeMessage("/apikey_off")
+
+    await cmd_apikey_off(message, session, vault, Cfg(), state)
+
+    assert await state.get_state() is None
+
+
+async def test_apikey_without_pending_state_does_not_mention_interruption(
+    session, vault, state
+):
+    message = FakeMessage("/apikey")
+
+    await cmd_apikey(message, session, vault, Cfg(), state)
+
+    assert not any("Ввод прерван" in text for text in message.sent)

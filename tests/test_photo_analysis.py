@@ -186,6 +186,46 @@ async def test_owner_album_ignores_the_photo_limit(
     assert all("Максимум" not in text for text, _ in album[0].sent)
 
 
+class FlakyBot(FakeBot):
+    """Как FakeBot, но одно конкретное фото «не скачивается» (download_file
+    вернул None) — имитирует сетевой сбой посреди альбома."""
+
+    def __init__(self, failing_file_id: str, width: int = 2000, height: int = 1500):
+        super().__init__(width=width, height=height)
+        self._failing_file_id = failing_file_id
+
+    async def download_file(self, file_path: str):
+        if file_path == f"photos/{self._failing_file_id}.jpg":
+            return None
+        return await super().download_file(file_path)
+
+
+async def test_failed_download_in_album_is_excluded_from_photo_file_ids(
+    keyed_session, builder, vault
+):
+    """Раньше file_ids собирался до попытки скачивания: неудачно скачанное
+    фото всё равно попадало в photo_file_ids, хотя модель его не видела."""
+    import asyncio
+
+    from handlers import analysis
+
+    analysis._media_buffer._settle_delay = 0.01
+    album = [_photo_message(f"flaky-{i}", media_group_id="album-flaky") for i in range(3)]
+    bot = FlakyBot(failing_file_id="flaky-1")
+    llm = FakeRouter(LLMResponse(raw_text=FULL_ANSWER))
+
+    await asyncio.gather(
+        *(handle_photo(m, bot, keyed_session, builder, llm, vault) for m in album)
+    )
+
+    # модель увидела только два реально скачанных фото
+    assert len(llm.images[0]) == 2
+    submission = (await submissions_crud.recent_submissions(keyed_session, USER_ID))[0]
+    stored_ids = submission.photo_file_ids.split("\n")
+    assert stored_ids == ["flaky-0", "flaky-2"]
+    assert len(stored_ids) == len(llm.images[0])
+
+
 async def test_photo_without_key_is_not_downloaded(session, builder, vault):
     """Скачивать фото до проверки ключа — расход трафика впустую."""
     message = _photo_message()
