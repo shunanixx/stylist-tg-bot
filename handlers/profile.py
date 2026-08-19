@@ -7,7 +7,14 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.crud import users as users_crud
-from services.measurements import BY_FIELD, MEASUREMENTS, describe, looks_like_half, parse_value
+from services.measurements import (
+    BY_FIELD,
+    MEASUREMENTS,
+    describe,
+    looks_like_half,
+    parse_value,
+    suggest_sizes,
+)
 from states.onboarding_states import Onboarding
 
 router = Router(name="profile")
@@ -120,7 +127,13 @@ async def process_measurement(
     await state.clear()
     await users_crud.set_onboarded(session, message.from_user.id)
     user = await users_crud.get_or_create_user(session, message.from_user.id)
-    await message.answer("✅ Готово, параметры сохранены.\n\n" + render_profile(user))
+    final_message = (
+        "✅ Готово, параметры сохранены.\n\n"
+        + render_profile(user)
+        + "\n\n"
+        + suggest_sizes(user)
+    )
+    await message.answer(final_message)
 
 
 def render_profile(user) -> str:

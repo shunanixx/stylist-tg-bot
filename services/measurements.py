@@ -131,3 +131,65 @@ def parse_value(raw: str, measurement: Measurement) -> float | None:
             return None
         value *= 2
     return value
+
+
+@dataclass(frozen=True)
+class SizeRange:
+    """Размер и его диапазон обхватов в см."""
+
+    size: str
+    chest_min: float
+    chest_max: float
+
+
+# Стандартные европейские размеры по обхвату груди
+EU_SIZES = (
+    SizeRange("XS (EU 32)", 76, 84),
+    SizeRange("S (EU 36)", 84, 92),
+    SizeRange("M (EU 40)", 92, 100),
+    SizeRange("L (EU 44)", 100, 108),
+    SizeRange("XL (EU 48)", 108, 116),
+    SizeRange("XXL (EU 50+)", 116, 200),
+)
+
+US_SIZES = (
+    SizeRange("XS (US 0-2)", 76, 84),
+    SizeRange("S (US 4-6)", 84, 92),
+    SizeRange("M (US 8-10)", 92, 100),
+    SizeRange("L (US 12-14)", 100, 108),
+    SizeRange("XL (US 16-18)", 108, 116),
+    SizeRange("XXL (US 20+)", 116, 200),
+)
+
+# Украина обычно использует EU размеры
+UA_SIZES = EU_SIZES
+
+
+def suggest_sizes(user) -> str:
+    """Рекомендует размер по параметрам. Показывает диапазон и ближайший."""
+    chest = getattr(user, "chest_cm", None)
+    waist = getattr(user, "waist_cm", None)
+    belt = getattr(user, "belt_cm", None)
+
+    # Ориентируемся на максимальный обхват — обычно при выборе размера
+    # вещи смотрят, чтобы она не облегала в самом широком месте
+    girths = [v for v in [chest, waist, belt] if v is not None]
+    if not girths:
+        return "📏 Заполните все обхваты, чтобы узнать рекомендуемый размер"
+
+    main_girth = max(girths)
+
+    lines = ["📏 <b>Рекомендуемые размеры</b>\n"]
+    for systems, name in [(EU_SIZES, "🇪🇺 Europe"), (UA_SIZES, "🇺🇦 Ukraina"), (US_SIZES, "🇺🇸 USA")]:
+        # Диапазон: все размеры, в которые попадает основной обхват
+        in_range = [s.size for s in systems if s.chest_min <= main_girth < s.chest_max]
+        # Ближайший: если не попадает, выбираем самый близкий
+        if in_range:
+            suggested = " / ".join(in_range)
+        else:
+            closest = min(systems, key=lambda s: abs((s.chest_min + s.chest_max) / 2 - main_girth))
+            suggested = closest.size
+
+        lines.append(f"{name}: {suggested}")
+
+    return "\n".join(lines)
